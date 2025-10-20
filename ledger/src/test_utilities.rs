@@ -155,11 +155,7 @@ impl<D: DB> TestState<D> {
         }
     }
 
-    pub async fn reward_night(
-        &mut self,
-        rng: &mut (impl Rng + CryptoRng + SplittableRng),
-        amount: u128,
-    ) {
+    pub async fn reward_night(&mut self, rng: &mut (impl CryptoRng + SplittableRng), amount: u128) {
         let amount = u128::max(amount, self.ledger.parameters.min_claimable_rewards());
         let address = UserAddress::from(self.night_key.verifying_key());
 
@@ -212,7 +208,7 @@ impl<D: DB> TestState<D> {
 
     pub async fn rewards_unshielded(
         &mut self,
-        rng: &mut (impl Rng + CryptoRng + SplittableRng),
+        rng: &mut (impl CryptoRng + SplittableRng),
         token: UnshieldedTokenType,
         amount: u128,
     ) {
@@ -325,7 +321,7 @@ impl<D: DB> TestState<D> {
 
     pub async fn give_fee_token(
         &mut self,
-        rng: &mut (impl Rng + CryptoRng + SplittableRng),
+        rng: &mut (impl CryptoRng + SplittableRng),
         utxos: usize,
     ) {
         use crate::structure::STARS_PER_NIGHT;
@@ -435,7 +431,7 @@ impl<D: DB> TestState<D> {
         B: Serializable + Clone + PedersenDowngradeable<D> + Storable<D>,
     >(
         &mut self,
-        mut rng: impl Rng + CryptoRng + SplittableRng,
+        mut rng: impl CryptoRng + SplittableRng,
         mut tx: Transaction<S, P, B, D>,
         resolver: &Resolver,
     ) -> Result<Transaction<S, P, B, D>, MalformedTransaction<D>> {
