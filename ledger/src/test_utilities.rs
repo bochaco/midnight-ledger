@@ -144,8 +144,10 @@ impl<D: DB> TestState<D> {
     }
 
     pub fn context(&self) -> TransactionContext<D> {
-        let mut block = BlockContext::default();
-        block.tblock = self.time;
+        let block = BlockContext {
+            tblock: self.time,
+            ..BlockContext::default()
+        };
         TransactionContext {
             ref_state: self.ledger.clone(),
             block_context: block,
@@ -231,8 +233,10 @@ impl<D: DB> TestState<D> {
         let mut intent = Intent::empty(rng, self.time);
         intent.guaranteed_unshielded_offer = Some(Sp::new(offer));
         let tx = Transaction::from_intents("local-test", SHashMap::new().insert(1u16, intent));
-        let mut strictness = WellFormedStrictness::default();
-        strictness.enforce_balancing = false;
+        let strictness = WellFormedStrictness {
+            enforce_balancing: false,
+            ..WellFormedStrictness::default()
+        };
         self.assert_apply(&tx, strictness);
     }
 
@@ -271,8 +275,10 @@ impl<D: DB> TestState<D> {
             Some(offer),
             HashMap::new(),
         );
-        let mut strictness = WellFormedStrictness::default();
-        strictness.enforce_balancing = false;
+        let strictness = WellFormedStrictness {
+            enforce_balancing: false,
+            ..WellFormedStrictness::default()
+        };
         self.assert_apply(&tx, strictness);
     }
 
@@ -309,9 +315,11 @@ impl<D: DB> TestState<D> {
         let mut intent = Intent::empty(rng, self.time);
         intent.dust_actions = Some(Sp::new(actions));
         let tx = Transaction::from_intents("local-test", SHashMap::new().insert(1, intent));
-        let mut strictness = WellFormedStrictness::default();
-        strictness.enforce_balancing = false;
-        strictness.verify_signatures = false;
+        let strictness = WellFormedStrictness {
+            enforce_balancing: false,
+            verify_signatures: false,
+            ..WellFormedStrictness::default()
+        };
         self.assert_apply(&tx, strictness);
     }
 
