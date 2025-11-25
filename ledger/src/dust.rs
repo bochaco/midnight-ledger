@@ -632,6 +632,7 @@ pub struct DustRegistration<S: SignatureKind<D>, D: DB> {
     pub night_key: VerifyingKey,
     pub dust_address: Option<Sp<DustPublicKey, D>>,
     pub allow_fee_payment: u128,
+    #[allow(clippy::type_complexity)]
     pub signature: Option<Sp<S::Signature<(u16, ErasedIntent<D>)>, D>>,
 }
 tag_enforcement_test!(DustRegistration<(), InMemoryDB>);
@@ -952,6 +953,7 @@ impl<D: DB> DustState<D> {
         Ok(state)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn apply_registration<S: SignatureKind<D>>(
         &self,
         utxo: &UtxoState<D>,
@@ -1032,6 +1034,7 @@ impl<D: DB> DustState<D> {
         Ok((state, fees_remaining))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn fresh_dust_output(
         &self,
         initial_nonce: InitialNonce,
