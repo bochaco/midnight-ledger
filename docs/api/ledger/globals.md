@@ -1,8 +1,8 @@
-[**@midnight/ledger v6.1.0-alpha.5**](README.md)
+[**@midnight/ledger v7.0.0-alpha.1**](README.md)
 
 ***
 
-# @midnight/ledger v6.1.0-alpha.5
+# @midnight/ledger v7.0.0-alpha.1
 
 ## Classes
 
@@ -38,6 +38,7 @@
 - [NoBinding](classes/NoBinding.md)
 - [NoProof](classes/NoProof.md)
 - [PreBinding](classes/PreBinding.md)
+- [PrePartitionContractCall](classes/PrePartitionContractCall.md)
 - [PreProof](classes/PreProof.md)
 - [PreTranscript](classes/PreTranscript.md)
 - [Proof](classes/Proof.md)
@@ -108,6 +109,7 @@
 - [IntentHash](type-aliases/IntentHash.md)
 - [Key](type-aliases/Key.md)
 - [Nonce](type-aliases/Nonce.md)
+- [NormalizedCost](type-aliases/NormalizedCost.md)
 - [Nullifier](type-aliases/Nullifier.md)
 - [Op](type-aliases/Op.md)
 - [PartitionedTranscript](type-aliases/PartitionedTranscript.md)
@@ -120,6 +122,7 @@
 - [QualifiedShieldedCoinInfo](type-aliases/QualifiedShieldedCoinInfo.md)
 - [RawTokenType](type-aliases/RawTokenType.md)
 - [RunningCost](type-aliases/RunningCost.md)
+- [SegmentSpecifier](type-aliases/SegmentSpecifier.md)
 - [ShieldedCoinInfo](type-aliases/ShieldedCoinInfo.md)
 - [ShieldedTokenType](type-aliases/ShieldedTokenType.md)
 - [Signature](type-aliases/Signature.md)

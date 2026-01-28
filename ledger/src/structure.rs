@@ -59,7 +59,7 @@ use std::iter::once;
 use std::marker::PhantomData;
 use std::ops::Deref;
 use storage::Storable;
-use storage::arena::{ArenaKey, Sp};
+use storage::arena::{ArenaHash, ArenaKey, Sp};
 use storage::db::DB;
 use storage::db::InMemoryDB;
 use storage::merkle_patricia_trie::Annotation;
@@ -219,30 +219,121 @@ impl<D: DB> PedersenDowngradeable<D> for Pedersen {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serializable, Storable)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Storable)]
 #[storable(base)]
 #[tag = "proof-preimage-versioned"]
 #[non_exhaustive]
 pub enum ProofPreimageVersioned {
-    V1(std::sync::Arc<ProofPreimage>),
+    V2(std::sync::Arc<ProofPreimage>),
 }
+
+impl Serializable for ProofPreimageVersioned {
+    fn serialize(&self, writer: &mut impl Write) -> std::io::Result<()> {
+        match self {
+            ProofPreimageVersioned::V2(preimage) => {
+                Serializable::serialize(&1u8, writer)?;
+                preimage.serialize(writer)
+            }
+        }
+    }
+    fn serialized_size(&self) -> usize {
+        match self {
+            ProofPreimageVersioned::V2(preimage) => preimage.serialized_size() + 1,
+        }
+    }
+}
+
+impl Deserializable for ProofPreimageVersioned {
+    fn deserialize(reader: &mut impl Read, recursion_depth: u32) -> std::io::Result<Self> {
+        let discrim = Deserializable::deserialize(reader, recursion_depth)?;
+        match discrim {
+            0u8 => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid old discriminant for ProofPreimageVersioned: {discrim}"),
+            )),
+            1 => Ok(ProofPreimageVersioned::V2(std::sync::Arc::new(
+                ProofPreimage::deserialize(reader, recursion_depth)?,
+            ))),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("unknown discriminant for ProofPreimageVersioned: {discrim}"),
+            )),
+        }
+    }
+}
+
+impl Tagged for ProofPreimageVersioned {
+    fn tag() -> std::borrow::Cow<'static, str> {
+        "proof-preimage-versioned".into()
+    }
+    fn tag_unique_factor() -> String {
+        format!("[[],{}]", ProofPreimage::tag())
+    }
+}
+
 tag_enforcement_test!(ProofPreimageVersioned);
 
 impl ProofPreimageVersioned {
     pub fn key_location(&self) -> &KeyLocation {
         match self {
-            ProofPreimageVersioned::V1(ppi) => &ppi.key_location,
+            ProofPreimageVersioned::V2(ppi) => &ppi.key_location,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serializable, Storable, Introspection)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Storable, Introspection)]
 #[storable(base)]
 #[tag = "proof-versioned"]
 #[non_exhaustive]
 pub enum ProofVersioned {
-    V1(Proof),
+    V2(Proof),
 }
+
+impl Serializable for ProofVersioned {
+    fn serialize(&self, writer: &mut impl Write) -> std::io::Result<()> {
+        match self {
+            ProofVersioned::V2(proof) => {
+                Serializable::serialize(&1u8, writer)?;
+                proof.serialize(writer)
+            }
+        }
+    }
+    fn serialized_size(&self) -> usize {
+        match self {
+            ProofVersioned::V2(proof) => proof.serialized_size() + 1,
+        }
+    }
+}
+
+impl Deserializable for ProofVersioned {
+    fn deserialize(reader: &mut impl Read, recursion_depth: u32) -> std::io::Result<Self> {
+        let discrim = Deserializable::deserialize(reader, recursion_depth)?;
+        match discrim {
+            0u8 => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid old discriminant for ProofVersioned: {discrim}"),
+            )),
+            1 => Ok(ProofVersioned::V2(Proof::deserialize(
+                reader,
+                recursion_depth,
+            )?)),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("unknown discriminant for ProofVersioned: {discrim}"),
+            )),
+        }
+    }
+}
+
+impl Tagged for ProofVersioned {
+    fn tag() -> std::borrow::Cow<'static, str> {
+        "proof-versioned".into()
+    }
+    fn tag_unique_factor() -> String {
+        format!("[[],{}]", Proof::tag())
+    }
+}
+
 tag_enforcement_test!(ProofVersioned);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serializable, Storable)]
@@ -310,7 +401,7 @@ pub trait ProofKind<D: DB>: Ord + Storable<D> + Serializable + Deserializable + 
 
 impl From<Proof> for ProofVersioned {
     fn from(proof: Proof) -> Self {
-        Self::V1(proof)
+        Self::V2(proof)
     }
 }
 
@@ -360,14 +451,14 @@ impl<D: DB> ProofKind<D> for ProofMarker {
             }
         };
 
-        if op.v2.is_some() && !matches!(proof, ProofVersioned::V1(_)) {
+        if op.v2.is_some() && !matches!(proof, ProofVersioned::V2(_)) {
             return Err(MalformedTransaction::<D>::UnsupportedProofVersion {
                 op_version: "V2".to_string(),
             });
         }
 
         match proof {
-            ProofVersioned::V1(proof) => match mode {
+            ProofVersioned::V2(proof) => match mode {
                 #[cfg(feature = "mock-verify")]
                 ProofVerificationMode::CalibratedMock => vk
                     .mock_verify(pis.into_iter())
@@ -409,7 +500,7 @@ impl<D: DB> ProofKind<D> for ProofMarker {
 
 impl From<ProofPreimage> for ProofPreimageVersioned {
     fn from(proof: ProofPreimage) -> Self {
-        Self::V1(std::sync::Arc::new(proof))
+        Self::V2(std::sync::Arc::new(proof))
     }
 }
 
@@ -746,7 +837,7 @@ impl rand::distributions::Distribution<IntentHash> for rand::distributions::Stan
 pub type ErasedIntent<D> = Intent<(), (), Pedersen, D>;
 
 #[derive(Storable)]
-#[tag = "intent[v5]"]
+#[tag = "intent[v6]"]
 #[derive_where(Clone, PartialEq, Eq; S, B, P)]
 #[storable(db = D)]
 pub struct Intent<S: SignatureKind<D>, P: ProofKind<D>, B: Storable<D>, D: DB> {
@@ -921,7 +1012,7 @@ impl<D: DB> Default for ReplayProtectionState<D> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serializable)]
+#[derive(Clone, Debug, PartialEq, Eq, Serializable, Serialize, Deserialize)]
 #[tag = "transaction-cost-model[v4]"]
 pub struct TransactionCostModel {
     pub runtime_cost_model: onchain_runtime::cost_model::CostModel,
@@ -1060,6 +1151,7 @@ pub const INITIAL_TRANSACTION_COST_MODEL: TransactionCostModel = TransactionCost
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serializable)]
+#[cfg_attr(feature = "fixed-point-custom-serde", derive(Serialize, Deserialize))]
 #[tag = "transaction-limits[v2]"]
 pub struct TransactionLimits {
     pub transaction_byte_limit: u64,
@@ -1069,6 +1161,10 @@ pub struct TransactionLimits {
     /// The minimum amount of Night withdrawable from block rewards, as a
     /// multiple of the amount which would be able to pay the theoretical fees
     /// for the withdrawal when Dust reaches its cap.
+    #[cfg_attr(
+        feature = "fixed-point-custom-serde",
+        serde(with = "base_crypto::cost_model::fixed_point_custom_serde")
+    )]
     pub block_withdrawal_minimum_multiple: FixedPoint,
 }
 tag_enforcement_test!(TransactionLimits);
@@ -1088,6 +1184,10 @@ pub const INITIAL_LIMITS: TransactionLimits = TransactionLimits {
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serializable, Storable)]
+#[cfg_attr(
+    feature = "fixed-point-custom-serde",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[tag = "ledger-parameters[v5]"]
 #[storable(base)]
 pub struct LedgerParameters {
@@ -1097,7 +1197,15 @@ pub struct LedgerParameters {
     pub fee_prices: FeePrices,
     pub global_ttl: Duration,
     // Valid range of 0..1
+    #[cfg_attr(
+        feature = "fixed-point-custom-serde",
+        serde(with = "base_crypto::cost_model::fixed_point_custom_serde")
+    )]
     pub cost_dimension_min_ratio: FixedPoint,
+    #[cfg_attr(
+        feature = "fixed-point-custom-serde",
+        serde(with = "base_crypto::cost_model::fixed_point_custom_serde")
+    )]
     pub price_adjustment_a_parameter: FixedPoint,
     // Note: This is equivalent to `c_to_m_bridge_fee_percent` in the spec
     // Valid range of 0..10_000
@@ -1169,7 +1277,7 @@ pub const INITIAL_PARAMETERS: LedgerParameters = LedgerParameters {
 #[derive(Storable)]
 #[storable(db = D)]
 #[derive_where(Clone; S, B, P)]
-#[tag = "transaction[v8]"]
+#[tag = "transaction[v9]"]
 // TODO: Getting `Box` to serialize is a pain right now. Revisit later.
 #[allow(clippy::large_enum_variant)]
 pub enum Transaction<S: SignatureKind<D>, P: ProofKind<D>, B: Storable<D>, D: DB> {
@@ -1443,7 +1551,7 @@ impl<S: SignatureKind<D>, P: ProofKind<D>, B: Storable<D>, D: DB> Intent<S, P, B
 #[derive(Storable)]
 #[storable(db = D)]
 #[derive_where(Clone, Debug; S, P, B)]
-#[tag = "standard-transaction[v8]"]
+#[tag = "standard-transaction[v9]"]
 pub struct StandardTransaction<S: SignatureKind<D>, P: ProofKind<D>, B: Storable<D>, D: DB> {
     pub network_id: String,
     pub intents: HashMap<u16, Intent<S, P, B, D>, D>,
@@ -2380,7 +2488,7 @@ impl<P: ProofKind<D>, D: DB> ContractCall<P, D> {
 #[derive(Storable)]
 #[derive_where(Clone, PartialEq, Eq)]
 #[storable(db = D)]
-#[tag = "contract-deploy[v3]"]
+#[tag = "contract-deploy[v4]"]
 pub struct ContractDeploy<D: DB> {
     pub initial_state: ContractState<D>,
     pub nonce: HashOutput,
@@ -2405,21 +2513,21 @@ impl<D: DB> ContractDeploy<D> {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum ContractOperationVersion {
-    V2,
+    V3,
 }
 
 impl Serializable for ContractOperationVersion {
     fn serialize(&self, writer: &mut impl Write) -> Result<(), std::io::Error> {
         use ContractOperationVersion as V;
         match self {
-            V::V2 => Serializable::serialize(&1u8, writer),
+            V::V3 => Serializable::serialize(&2u8, writer),
         }
     }
 
     fn serialized_size(&self) -> usize {
         use ContractOperationVersion as V;
         match self {
-            V::V2 => 1,
+            V::V3 => 1,
         }
     }
 }
@@ -2440,11 +2548,11 @@ impl Deserializable for ContractOperationVersion {
         let mut disc = vec![0u8; 1];
         reader.read_exact(&mut disc)?;
         match disc[0] {
-            0u8 => Err(std::io::Error::new(
+            0u8..=1u8 => Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!("Invalid old discriminant {}", disc[0]),
             )),
-            1u8 => Ok(V::V2),
+            2u8 => Ok(V::V3),
             _ => Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!("Unknown discriminant {}", disc[0]),
@@ -2457,13 +2565,13 @@ impl ContractOperationVersion {
     pub(crate) fn has(&self, co: &ContractOperation) -> bool {
         use ContractOperationVersion as V;
         match self {
-            V::V2 => co.v2.is_some(),
+            V::V3 => co.v2.is_some(),
         }
     }
     pub(crate) fn rm_from(&self, co: &mut ContractOperation) {
         use ContractOperationVersion as V;
         match self {
-            V::V2 => co.v2 = None,
+            V::V3 => co.v2 = None,
         }
     }
 }
@@ -2471,7 +2579,7 @@ impl ContractOperationVersion {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum ContractOperationVersionedVerifierKey {
-    V2(transient_crypto::proofs::VerifierKey),
+    V3(transient_crypto::proofs::VerifierKey),
 }
 
 impl ContractOperationVersionedVerifierKey {
@@ -2479,14 +2587,14 @@ impl ContractOperationVersionedVerifierKey {
         use ContractOperationVersion as V;
         use ContractOperationVersionedVerifierKey as VK;
         match self {
-            VK::V2(_) => V::V2,
+            VK::V3(_) => V::V3,
         }
     }
 
     pub(crate) fn insert_into(&self, co: &mut ContractOperation) {
         use ContractOperationVersionedVerifierKey as VK;
         match self {
-            VK::V2(vk) => co.v2 = Some(vk.clone()),
+            VK::V3(vk) => co.v2 = Some(vk.clone()),
         }
     }
 }
@@ -2495,8 +2603,8 @@ impl Serializable for ContractOperationVersionedVerifierKey {
     fn serialize(&self, writer: &mut impl Write) -> Result<(), std::io::Error> {
         use ContractOperationVersionedVerifierKey as VK;
         match self {
-            VK::V2(vk) => {
-                Serializable::serialize(&1u8, writer)?;
+            VK::V3(vk) => {
+                Serializable::serialize(&2u8, writer)?;
                 Serializable::serialize(vk, writer)
             }
         }
@@ -2505,7 +2613,7 @@ impl Serializable for ContractOperationVersionedVerifierKey {
     fn serialized_size(&self) -> usize {
         use ContractOperationVersionedVerifierKey as VK;
         match self {
-            VK::V2(vk) => 1 + Serializable::serialized_size(vk),
+            VK::V3(vk) => 1 + Serializable::serialized_size(vk),
         }
     }
 }
@@ -2515,7 +2623,7 @@ impl Tagged for ContractOperationVersionedVerifierKey {
         "contract-operation-versioned-verifier-key".into()
     }
     fn tag_unique_factor() -> String {
-        format!("[[],{}]", transient_crypto::proofs::VerifierKey::tag())
+        format!("[[],[],{}]", transient_crypto::proofs::VerifierKey::tag())
     }
 }
 tag_enforcement_test!(ContractOperationVersionedVerifierKey);
@@ -2526,11 +2634,11 @@ impl Deserializable for ContractOperationVersionedVerifierKey {
         let mut disc = vec![0u8; 1];
         reader.read_exact(&mut disc)?;
         match disc[0] {
-            0u8 => Err(std::io::Error::new(
+            0u8..=1u8 => Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!("Invalid old discriminant {}", disc[0]),
             )),
-            1u8 => Ok(VK::V2(Deserializable::deserialize(
+            2u8 => Ok(VK::V3(Deserializable::deserialize(
                 reader,
                 recursion_depth,
             )?)),
@@ -2610,7 +2718,7 @@ impl<D: DB> MaintenanceUpdate<D> {
 
 #[derive(Storable)]
 #[storable(db = D)]
-#[tag = "contract-action[v5]"]
+#[tag = "contract-action[v6]"]
 #[derive_where(Clone, PartialEq, Eq; P)]
 pub enum ContractAction<P: ProofKind<D>, D: DB> {
     Call(#[storable(child)] Sp<ContractCall<P, D>, D>),
@@ -2856,7 +2964,7 @@ impl<D: DB> Default for UtxoState<D> {
 #[derive(Storable)]
 #[derive_where(Clone, Debug, PartialEq, Eq)]
 #[storable(db = D)]
-#[tag = "ledger-state[v12]"]
+#[tag = "ledger-state[v13]"]
 #[must_use]
 pub struct LedgerState<D: DB> {
     pub network_id: String,
@@ -2903,6 +3011,10 @@ impl<D: DB> LedgerState<D> {
             replay_protection: Sp::new(ReplayProtectionState::default()),
             dust: Sp::new(DustState::default()),
         }
+    }
+
+    pub fn state_hash(&self) -> ArenaHash<D::Hasher> {
+        Sp::new(self.clone()).hash()
     }
 
     pub fn index(&self, address: ContractAddress) -> Option<ContractState<D>> {

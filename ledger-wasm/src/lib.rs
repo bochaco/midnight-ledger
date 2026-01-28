@@ -18,6 +18,7 @@ pub mod crypto;
 pub mod dust;
 pub mod intent;
 pub mod state;
+pub mod state_changes;
 pub mod transcript;
 pub mod tx;
 pub mod unshielded;
@@ -179,7 +180,7 @@ pub fn create_proving_transaction_payload(
 fn try_proof_preimage(serialized_preimage: &[u8]) -> Result<ProofPreimageVersioned, JsError> {
     Ok(
         tagged_deserialize(&mut &serialized_preimage[..]).or_else(|_| {
-            tagged_deserialize(&mut &serialized_preimage[..]).map(ProofPreimageVersioned::V1)
+            tagged_deserialize(&mut &serialized_preimage[..]).map(ProofPreimageVersioned::V2)
         })?,
     )
 }

@@ -1035,7 +1035,7 @@ pub struct OnDiskObject<H: WellBehavedHasher> {
     /// `persist`ed. Note that the `persist` counts are stored separately -- see
     /// `StorageBackend::get_root_count` for details -- but not here in the
     /// object!
-    pub(crate) ref_count: u64,
+    pub ref_count: u64,
     pub(crate) children: std::vec::Vec<ArenaKey<H>>,
 }
 
@@ -1125,7 +1125,8 @@ impl<H: WellBehavedHasher> Distribution<OnDiskObject<H>> for Standard {
         }
         OnDiskObject {
             data: rand_vec(rng, |r| r.r#gen()),
-            ref_count: rng.r#gen(),
+            // u64 is too big to fit into i64 (SQLite INTEGER) so we need to slightly adjust it
+            ref_count: rng.gen_range(0..=i64::MAX as u64),
             children: rand_vec(rng, |r| ArenaKey::Ref(r.r#gen())),
         }
     }

@@ -1,4 +1,4 @@
-<% print(fs.readFileSync('../onchain-runtime-wasm/onchain-runtime-v1.d.ts', 'utf8')); %>
+<% print(fs.readFileSync('../onchain-runtime-wasm/onchain-runtime-v2.d.ts', 'utf8')); %>
 
 /**
  * A zero-knowledge proof.
@@ -247,7 +247,7 @@ export class DustSecretKey {
 
   /**
    * Create an instance of {@link DustSecretKey} from a seed.
-   * @param Uint8Array
+   * @param seed
    */
   static fromSeed(seed: Uint8Array): DustSecretKey;
 
@@ -368,6 +368,34 @@ export class DustState {
   readonly generation: DustGenerationState;
 }
 
+export class DustStateChanges {
+  private constructor();
+  /**
+   * The source of the state change, as a hex-encoded string
+   */
+  readonly source: string;
+  /**
+   * The UTXOs that were received in this state change
+   */
+  readonly receivedUtxos: QualifiedDustOutput[];
+  /**
+   * The UTXOs that were spent in this state change
+   */
+  readonly spentUtxos: QualifiedDustOutput[];
+}
+
+export class DustLocalStateWithChanges {
+  private constructor();
+  /**
+   * The updated local state after replaying events
+   */
+  readonly state: DustLocalState;
+  /**
+   * The state changes that occurred during the replay
+   */
+  readonly changes: DustStateChanges[];
+}
+
 export class DustLocalState {
   constructor(params: DustParameters);
   walletBalance(time: Date): bigint;
@@ -375,6 +403,7 @@ export class DustLocalState {
   spend(sk: DustSecretKey, utxo: QualifiedDustOutput, vFee: bigint, ctime: Date): [DustLocalState, DustSpend<PreProof>];
   processTtls(time: Date): DustLocalState;
   replayEvents(sk: DustSecretKey, events: Event[]): DustLocalState;
+  replayEventsWithChanges(sk: DustSecretKey, events: Event[]): DustLocalStateWithChanges;
   serialize(): Uint8Array;
   static deserialize(raw: Uint8Array): DustLocalState;
   toString(compact?: boolean): string;
@@ -675,6 +704,30 @@ export class ContractCall<P extends Proofish> {
 }
 
 /**
+ * A {@link ContractCall} prior to being partitioned into guarnateed and
+ * fallible parts, for use with {@link Transaction.addCalls}.
+ *
+ * Note that this is similar, but not the same as {@link ContractCall}, which
+ * assumes {@link partitionTranscripts} was already used. {@link
+ * Transaction.addCalls} is a replacement for this that also handles
+ * Zswap components, and creates relevant intents when needed.
+ */
+export class PrePartitionContractCall {
+  constructor(
+    address: ContractAddress,
+    entry_point: Uint8Array | string,
+    op: ContractOperation,
+    pre_transcript: PreTranscript,
+    private_transcript_outputs: AlignedValue[],
+    input: AlignedValue,
+    output: AlignedValue,
+    communication_commitment_rand: CommunicationCommitmentRand,
+    key_location: string
+  );
+  toString(compact?: boolean): string;
+}
+
+/**
  * A {@link ContractCall} still being assembled
  */
 export class ContractCallPrototype {
@@ -875,9 +928,9 @@ export type SingleUpdate = ReplaceAuthority | VerifierKeyRemove | VerifierKeyIns
  * The version associated with a {@link ContractOperation}
  */
 export class ContractOperationVersion {
-  constructor(version: 'v2');
+  constructor(version: 'v3');
 
-  readonly version: 'v2';
+  readonly version: 'v3';
 
   toString(compact?: boolean): string;
 }
@@ -886,9 +939,9 @@ export class ContractOperationVersion {
  * A versioned verifier key to be associated with a {@link ContractOperation}.
  */
 export class ContractOperationVersionedVerifierKey {
-  constructor(version: 'v2', rawVk: Uint8Array);
+  constructor(version: 'v3', rawVk: Uint8Array);
 
-  readonly version: 'v2';
+  readonly version: 'v3';
   readonly rawVk: Uint8Array;
 
   toString(compact?: boolean): string;
@@ -1002,6 +1055,17 @@ export type ProvingProvider = {
 };
 
 /**
+ * Specifies where something should execute in a transaction.
+ *
+ * Options are:
+ * - As the first thing (alias for `{ tag: 'specific', value: 1 }`)
+ * - In any physical segment, but only utilising the guaranteed logical segment
+ * - In a random segment (ideal for merging with other intents)
+ * - In a specific directly provided segment (in the range 1..65535)
+ */
+export type SegmentSpecifier = { tag: 'first' } | { tag: 'guaranteedOnly' } | { tag: 'random' } | { tag: 'specific', value: number };
+
+/**
  * A transaction that has been validated with `wellFormed`.
  **/
 export class VerifiedTransaction {
@@ -1051,7 +1115,7 @@ export class Transaction<S extends Signaturish, P extends Proofish, B extends Bi
    * @throws If called on bound, proven, or proof-erased transactions, or if the
    * transaction contains unproven contract calls.
    */
-  mockProve(): Transaction<S, Proof, B>;
+  mockProve(): Transaction<S, Proof, Binding>;
   /**
    * Proves the transaction, with access to a low-level proving provider.
    * This may *only* be called for `P = PreProof`.
@@ -1059,6 +1123,26 @@ export class Transaction<S extends Signaturish, P extends Proofish, B extends Bi
    * @throws If called on bound, proven, or proof-erased transactions.
    */
   prove(provider: ProvingProvider, cost_model: CostModel): Promise<Transaction<S, Proof, B>>;
+
+  /**
+   * Adds a set of new calls to the transaction.
+   *
+   * In contrast to {@link Intent.addCall}, this takes calls *before*
+   * transcript partitioning ({@link partitionTranscripts}), will create the
+   * target intent where needed, and will ensure that relevant Zswap parts are
+   * placed in the same section as contract interactions with them.
+   *
+   * @throws If called on bound, proven, or proof-erased transactions.
+   */
+  addCalls(
+    segment: SegmentSpecifier,
+    calls: PrePartitionContractCall[],
+    params: LedgerParameters,
+    ttl: Date,
+    zswapInputs?: ZswapInput<PreProof>[],
+    zswapOutputs?: ZswapOutput<PreProof>[],
+    zswapTransient?: ZswapTransient<PreProof>[],
+  ): Transaction<S, P, B>;
 
   /**
    * Erases the proofs contained in this transaction
@@ -1151,18 +1235,36 @@ export class Transaction<S extends Signaturish, P extends Proofish, B extends Bi
   readonly rewards: ClaimRewardsTransaction<S> | undefined;
   /**
    * The intents contained in this transaction
+   *
+   * Note that writing to this re-computes binding information if and only if
+   * this transaction is unbound *and* unproven. If this is not the case,
+   * creating or removing intents will lead to a binding error down the line,
+   * but modifying existing intents will succeed.
+   *
    * @throws On writing if `B` is {@link Binding} or this is not a standard
    * transaction
    */
   intents: Map<number, Intent<S, P, B>> | undefined;
   /**
    * The fallible Zswap offer
+   *
+   * Note that writing to this re-computes binding information if and only if
+   * this transaction is unbound *and* unproven. If this is not the case,
+   * creating or removing offer components will lead to a binding error down
+   * the line.
+   *
    * @throws On writing if `B` is {@link Binding} or this is not a standard
    * transaction
    */
   fallibleOffer: Map<number, ZswapOffer<P>> | undefined;
   /**
    * The guaranteed Zswap offer
+   *
+   * Note that writing to this re-computes binding information if and only if
+   * this transaction is unbound *and* unproven. If this is not the case,
+   * creating or removing offer components will lead to a binding error down
+   * the line.
+   *
    * @throws On writing if `B` is {@link Binding} or this is not a standard
    * transaction
    */
@@ -1470,6 +1572,34 @@ export class ZswapChainState {
   filter(contractAddress: ContractAddress): ZswapChainState;
 }
 
+export class ZswapStateChanges {
+  private constructor();
+  /**
+   * The source of the state change, as a hex-encoded string
+   */
+  readonly source: string;
+  /**
+   * The coins that were received in this state change
+   */
+  readonly receivedCoins: QualifiedShieldedCoinInfo[];
+  /**
+   * The coins that were spent in this state change
+   */
+  readonly spentCoins: QualifiedShieldedCoinInfo[];
+}
+
+export class ZswapLocalStateWithChanges {
+  private constructor();
+  /**
+   * The updated local state after replaying events
+   */
+  readonly state: ZswapLocalState;
+  /**
+   * The state changes that occurred during the replay
+   */
+  readonly changes: ZswapStateChanges[];
+}
+
 /**
  * The local state of a user/wallet, consisting of a set
  * of unspent coins
@@ -1510,6 +1640,11 @@ export class ZswapLocalState {
    */
   replayEvents(secretKeys: ZswapSecretKeys, events: Event[]): ZswapLocalState;
   /**
+   * Replays observed events against the current local state, returning both the updated state
+   * and the state changes. These *must* be replayed in the same order as emitted by the chain being followed.
+   */
+  replayEventsWithChanges(secretKeys: ZswapSecretKeys, events: Event[]): ZswapLocalStateWithChanges;
+  /**
    * Locally applies an offer to the current state, returning the updated state
    */
   apply<P extends Proofish>(secretKeys: ZswapSecretKeys, offer: ZswapOffer<P>): ZswapLocalState;
@@ -1529,14 +1664,14 @@ export class ZswapLocalState {
    * {@link ZswapInput}, and the updated state marking this coin as
    * in-flight.
    */
-  spend(secretKeys: ZswapSecretKeys, coin: QualifiedShieldedCoinInfo, segment: number, ttl?: Date): [ZswapLocalState, UnprovenInput];
+  spend(secretKeys: ZswapSecretKeys, coin: QualifiedShieldedCoinInfo, segment: number | undefined, ttl?: Date): [ZswapLocalState, UnprovenInput];
 
   /**
    * Initiates a new spend of a new-yet-received output, outputting the
    * corresponding {@link ZswapTransient}, and the updated state marking
    * this coin as in-flight.
    */
-  spendFromOutput(secretKeys: ZswapSecretKeys, coin: QualifiedShieldedCoinInfo, segment: number, output: UnprovenOutput, ttl?: Date): [ZswapLocalState, UnprovenTransient];
+  spendFromOutput(secretKeys: ZswapSecretKeys, coin: QualifiedShieldedCoinInfo, segment: number | undefined, output: UnprovenOutput, ttl?: Date): [ZswapLocalState, UnprovenTransient];
 
   /**
    * Adds a coin to the list of coins that are expected to be received
@@ -1580,7 +1715,7 @@ export class ZswapLocalState {
 export class ZswapInput<P extends Proofish> {
   private constructor();
 
-  static newContractOwned(coin: QualifiedShieldedCoinInfo, segment: number, contract: ContractAddress, state: ZswapChainState): UnprovenInput;
+  static newContractOwned(coin: QualifiedShieldedCoinInfo, segment: number | undefined, contract: ContractAddress, state: ZswapChainState): UnprovenInput;
 
   serialize(): Uint8Array;
 
@@ -1615,7 +1750,7 @@ export class ZswapOutput<P extends Proofish> {
    * encryption public key, which may be omitted *only* if the {@link ShieldedCoinInfo}
    * is transferred to the recipient another way
    */
-  static new(coin: ShieldedCoinInfo, segment: number, target_cpk: CoinPublicKey, target_epk: EncPublicKey): UnprovenOutput;
+  static new(coin: ShieldedCoinInfo, segment: number | undefined, target_cpk: CoinPublicKey, target_epk: EncPublicKey): UnprovenOutput;
 
   /**
    * Creates a new output, targeted to a smart contract
@@ -1623,7 +1758,7 @@ export class ZswapOutput<P extends Proofish> {
    * A contract must *also* explicitly receive a coin created in this way for
    * the output to be valid
    */
-  static newContractOwned(coin: ShieldedCoinInfo, segment: number, contract: ContractAddress): UnprovenOutput;
+  static newContractOwned(coin: ShieldedCoinInfo, segment: number | undefined, contract: ContractAddress): UnprovenOutput;
 
   serialize(): Uint8Array;
 
@@ -1657,7 +1792,7 @@ export class ZswapTransient<P extends Proofish> {
    *
    * The {@link QualifiedShieldedCoinInfo} should have an `mt_index` of `0`
    */
-  static newFromContractOwnedOutput(coin: QualifiedShieldedCoinInfo, segment: number, output: UnprovenOutput): UnprovenTransient;
+  static newFromContractOwnedOutput(coin: QualifiedShieldedCoinInfo, segment: number | undefined, output: UnprovenOutput): UnprovenTransient;
 
   serialize(): Uint8Array;
 
@@ -1752,14 +1887,18 @@ export class ZswapOffer<P extends Proofish> {
   /**
    * Creates a singleton offer, from an {@link ZswapInput} and its value
    * vector
+   *
+   * The `type_` and `value` parameters are deprecated and will be ignored.
    */
-  static fromInput<P extends Proofish>(input: ZswapInput<P>, type_: RawTokenType, value: bigint): ZswapOffer<P>;
+  static fromInput<P extends Proofish>(input: ZswapInput<P>, type_?: RawTokenType, value?: bigint): ZswapOffer<P>;
 
   /**
    * Creates a singleton offer, from an {@link ZswapOutput} and its value
    * vector
+   *
+   * The `type_` and `value` parameters are deprecated and will be ignored.
    */
-  static fromOutput<P extends Proofish>(output: ZswapOutput<P>, type_: RawTokenType, value: bigint): ZswapOffer<P>;
+  static fromOutput<P extends Proofish>(output: ZswapOutput<P>, type_?: RawTokenType, value?: bigint): ZswapOffer<P>;
 
   /**
    * Creates a singleton offer, from a {@link ZswapTransient}

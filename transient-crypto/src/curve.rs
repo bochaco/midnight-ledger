@@ -46,6 +46,7 @@ use std::mem::size_of;
 use std::ops::Mul;
 use storage::{Storable, arena::ArenaKey, db::DB, storable::Loader};
 use zeroize::DefaultIsZeroes;
+
 /// The outer, main curve
 pub mod outer {
     /// The base prime field, used to represent curve points
@@ -511,13 +512,18 @@ impl EmbeddedGroupAffine {
         EmbeddedGroupAffine(embedded::Affine::identity())
     }
 
+    /// Returns if the curve point is the additive identity.
+    pub fn is_identity(&self) -> bool {
+        self.0.is_identity().into()
+    }
+
     /// Returns if the curve point is the point at infinity.
     pub fn is_infinity(&self) -> bool {
         false
     }
 
     /// Whether or not this embedded curve has an infinity point in affine representation.
-    pub const HAS_INFINITY: bool = true;
+    pub const HAS_INFINITY: bool = false;
 }
 
 impl PartialOrd for EmbeddedGroupAffine {
